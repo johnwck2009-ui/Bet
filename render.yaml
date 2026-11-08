@@ -10,7 +10,3 @@ services:
         value: 3.14
       - key: BOT_TOKEN
         sync: false
-      - key: DATABASE_URL
-        sync: false
-      - key: ADMIN_IDS
-        sync: false
