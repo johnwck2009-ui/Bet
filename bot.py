@@ -1,12 +1,11 @@
-import asyncio
+import json
 import logging
 import os
 import random
 from datetime import date
 from html import escape
+from pathlib import Path
 
-from psycopg.rows import dict_row
-from psycopg_pool import AsyncConnectionPool
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import (
@@ -21,12 +20,11 @@ logging.basicConfig(
 log = logging.getLogger("bet88")
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+DATA_FILE = Path(os.getenv("DATA_FILE", "bet88_data.json"))
 ADMIN_IDS = {
     int(value.strip()) for value in os.getenv("ADMIN_IDS", "").split(",")
     if value.strip().isdigit()
 }
-pool: AsyncConnectionPool | None = None
 
 QUESTIONS = [
     ("Which country won the 2022 FIFA World Cup?", ["France", "Argentina", "Brazil", "Germany"], 1, "World Cup"),
@@ -59,6 +57,7 @@ PLAYERS = [
     ("I am an Egyptian forward known for my time at Liverpool.", "Mohamed Salah"),
     ("I am a Norwegian striker who became known for prolific scoring at Manchester City.", "Erling Haaland"),
 ]
+
 FOOTBALL_FACTS = [
     "The first FIFA World Cup was held in Uruguay in 1930.",
     "A standard football pitch is rectangular, but its exact dimensions can vary within the Laws of the Game.",
@@ -78,6 +77,64 @@ CLUBS = [
     ("My home ground is Old Trafford and my nickname is the Red Devils.", "Manchester United"),
 ]
 
+# Simple local storage: no PostgreSQL or external database is required.
+state = {"users": {}, "daily_completions": [], "custom_questions": []}
+
+
+def save_state():
+    try:
+        temporary_file = DATA_FILE.with_suffix(".tmp")
+        temporary_file.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        temporary_file.replace(DATA_FILE)
+    except OSError:
+        log.exception("Could not save local bot data")
+
+
+def load_state():
+    global state
+    try:
+        if DATA_FILE.exists():
+            loaded = json.loads(DATA_FILE.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                state["users"].update(loaded.get("users", {}))
+                state["daily_completions"] = loaded.get("daily_completions", [])
+                state["custom_questions"] = loaded.get("custom_questions", [])
+                for item in state["custom_questions"]:
+                    QUESTIONS.append((
+                        item["prompt"], item["options"],
+                        int(item["answer"]), item["category"],
+                    ))
+    except (OSError, json.JSONDecodeError, TypeError, KeyError, ValueError):
+        log.exception("Could not load local bot data; starting with fresh data")
+
+
+def ensure_user(user):
+    key = str(user.id)
+    name = user.full_name or user.username or "Football fan"
+    if key not in state["users"]:
+        state["users"][key] = {
+            "username": user.username,
+            "full_name": name,
+            "points": 0,
+            "correct_answers": 0,
+            "games_played": 0,
+        }
+    else:
+        state["users"][key]["username"] = user.username
+        state["users"][key]["full_name"] = name
+    save_state()
+
+
+def add_points(user_id, points):
+    user = state["users"].setdefault(str(user_id), {
+        "username": None, "full_name": "Football fan",
+        "points": 0, "correct_answers": 0, "games_played": 0,
+    })
+    user["points"] += points
+    user["correct_answers"] += 1
+    save_state()
+
+
 def home_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("⚽ Play Quiz", callback_data="quiz"),
@@ -87,37 +144,13 @@ def home_keyboard():
         [InlineKeyboardButton("🏆 Leaderboard", callback_data="leaderboard"),
          InlineKeyboardButton("👤 My Profile", callback_data="profile")],
         [InlineKeyboardButton("💡 Football Facts", callback_data="facts")],
-        [InlineKeyboardButton("💡 Football Facts", callback_data="facts")],
         [InlineKeyboardButton("ℹ️ Help", callback_data="help")],
     ])
 
-async def db_execute(query, params=(), fetch=False):
-    async with pool.connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(query, params)
-            if fetch:
-                return await cur.fetchall()
-            return cur.rowcount
-
-async def ensure_user(user):
-    name = user.full_name or user.username or "Football fan"
-    await db_execute(
-        """INSERT INTO users (user_id, username, full_name)
-           VALUES (%s, %s, %s)
-           ON CONFLICT (user_id) DO UPDATE SET
-             username = EXCLUDED.username, full_name = EXCLUDED.full_name""",
-        (user.id, user.username, name),
-    )
-
-async def add_points(user_id, points):
-    await db_execute(
-        "UPDATE users SET points = points + %s, correct_answers = correct_answers + 1 WHERE user_id = %s",
-        (points, user_id),
-    )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await ensure_user(update.effective_user)
-    await update.message.reply_text(
+    ensure_user(update.effective_user)
+    await update.effective_message.reply_text(
         "⚽ <b>WELCOME TO BET88</b>\n"
         "<i>THE FOOTBALL CHALLENGE</i>\n\n"
         "Your football knowledge is about to be tested. Play trivia, identify legendary players, "
@@ -126,8 +159,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML, reply_markup=home_keyboard(),
     )
 
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         "<b>BET88 COMMANDS</b>\n"
         "/start — Open the main menu\n/play — Start a football quiz\n"
         "/player — Guess the mystery player\n/club — Guess the mystery club\n"
@@ -137,12 +171,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML, reply_markup=home_keyboard(),
     )
 
+
 async def show_profile(message, user_id):
-    rows = await db_execute(
-        "SELECT full_name, points, correct_answers, games_played FROM users WHERE user_id=%s",
-        (user_id,), fetch=True,
-    )
-    row = rows[0] if rows else None
+    row = state["users"].get(str(user_id))
     if not row:
         await message.reply_text("Your profile is not ready yet. Send /start first.")
         return
@@ -150,19 +181,22 @@ async def show_profile(message, user_id):
         f"👤 <b>{escape(row['full_name'])}</b>\n"
         f"⭐ Points: <b>{row['points']}</b>\n"
         f"✅ Correct answers: <b>{row['correct_answers']}</b>\n"
-        f"🎮 Quizzes played: <b>{row['games_played']}</b>",
+        f"🎮 Quiz questions answered: <b>{row['games_played']}</b>",
         parse_mode=ParseMode.HTML,
     )
 
+
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await ensure_user(update.effective_user)
+    ensure_user(update.effective_user)
     await show_profile(update.effective_message, update.effective_user.id)
 
+
 async def leaderboard_message(message):
-    rows = await db_execute(
-        "SELECT full_name, points FROM users ORDER BY points DESC, correct_answers DESC LIMIT 10",
-        fetch=True,
-    )
+    rows = sorted(
+        state["users"].values(),
+        key=lambda item: (item["points"], item["correct_answers"]),
+        reverse=True,
+    )[:10]
     if not rows:
         await message.reply_text("The leaderboard is waiting for its first challenger!")
         return
@@ -173,13 +207,19 @@ async def leaderboard_message(message):
         lines.append(f"{medal} {escape(row['full_name'])} — <b>{row['points']}</b> pts")
     await message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 
+
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await leaderboard_message(update.effective_message)
 
-async def facts(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.effective_message.reply_text("💡 <b>FOOTBALL FACT</b>\\n\\n" + random.choice(FOOTBALL_FACTS), parse_mode=ParseMode.HTML)
 
-async def send_quiz(message, user_id, context, daily=False):
+async def facts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.effective_message.reply_text(
+        "💡 <b>FOOTBALL FACT</b>\n\n" + random.choice(FOOTBALL_FACTS),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+async def send_quiz(message, context, daily=False):
     if daily:
         index = date.today().toordinal() % len(QUESTIONS)
         question = QUESTIONS[index]
@@ -188,8 +228,12 @@ async def send_quiz(message, user_id, context, daily=False):
         question = random.choice(QUESTIONS)
         context_key = "quiz"
     prompt, options, answer, category = question
-    # The question index and answer are stored in the user's Telegram session.
-    context.user_data[context_key] = {"answer": answer, "question": prompt, "daily": daily, "challenge_date": date.today().isoformat() if daily else None}
+    context.user_data[context_key] = {
+        "answer": answer,
+        "question": prompt,
+        "daily": daily,
+        "challenge_date": date.today().isoformat() if daily else None,
+    }
     buttons = [
         [InlineKeyboardButton(f"{chr(65+i)}. {option}", callback_data=f"answer:{context_key}:{i}")]
         for i, option in enumerate(options)
@@ -201,39 +245,45 @@ async def send_quiz(message, user_id, context, daily=False):
         parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons),
     )
 
+
 async def play(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await ensure_user(update.effective_user)
-    await send_quiz(update.effective_message, update.effective_user.id, context)
+    ensure_user(update.effective_user)
+    await send_quiz(update.effective_message, context)
+
 
 async def daily(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await ensure_user(update.effective_user)
+    ensure_user(update.effective_user)
     today = date.today().isoformat()
-    done = await db_execute(
-        "SELECT 1 FROM daily_completions WHERE user_id=%s AND challenge_date=%s",
-        (update.effective_user.id, today), fetch=True,
-    )
-    if done:
-        await update.effective_message.reply_text("You have already completed today's challenge. Come back tomorrow! ⚽")
+    if f"{update.effective_user.id}:{today}" in state["daily_completions"]:
+        await update.effective_message.reply_text(
+            "You have already completed today's challenge. Come back tomorrow! ⚽"
+        )
         return
-    await send_quiz(update.effective_message, update.effective_user.id, context, daily=True)
+    await send_quiz(update.effective_message, context, daily=True)
 
-async def guess_game(message, user_id, context, kind):
+
+async def guess_game(message, context, kind):
     options = PLAYERS if kind == "player" else CLUBS
     clue, answer = random.choice(options)
-    context.user_data[f"guess:{kind}"] = {"answer": answer.casefold(), "display": answer}
+    context.user_data[f"guess:{kind}"] = {
+        "answer": answer.casefold(), "display": answer,
+    }
     await message.reply_text(
         ("🕵️ <b>GUESS THE PLAYER</b>\n" if kind == "player" else "🏟 <b>GUESS THE CLUB</b>\n")
         + escape(clue) + "\n\nSend your answer as a message. You have one attempt.",
         parse_mode=ParseMode.HTML,
     )
 
+
 async def player(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await ensure_user(update.effective_user)
-    await guess_game(update.effective_message, update.effective_user.id, context, "player")
+    ensure_user(update.effective_user)
+    await guess_game(update.effective_message, context, "player")
+
 
 async def club(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await ensure_user(update.effective_user)
-    await guess_game(update.effective_message, update.effective_user.id, context, "club")
+    ensure_user(update.effective_user)
+    await guess_game(update.effective_message, context, "club")
+
 
 async def text_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -242,75 +292,100 @@ async def text_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         game = context.user_data.get(key)
         if game:
             context.user_data.pop(key, None)
-            if update.message.text.strip().casefold() == game["answer"]:
-                await add_points(user_id, 15)
-                await update.message.reply_text(f"🎉 Correct! It was {game['display']}. You earned 15 points.")
+            if update.effective_message.text.strip().casefold() == game["answer"]:
+                add_points(user_id, 15)
+                await update.effective_message.reply_text(
+                    f"🎉 Correct! It was {game['display']}. You earned 15 points."
+                )
             else:
-                await update.message.reply_text(f"Not quite! The answer was {game['display']}. Try another round.")
+                await update.effective_message.reply_text(
+                    f"Not quite! The answer was {game['display']}. Try another round."
+                )
             return
+
 
 async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
     user = query.from_user
-    await ensure_user(user)
+    ensure_user(user)
+
     if data == "home":
-        await query.message.reply_text("⚽ <b>BET88 — THE FOOTBALL CHALLENGE</b>", parse_mode=ParseMode.HTML, reply_markup=home_keyboard())
-    elif data == "help":
         await query.message.reply_text(
-            "/play — Football quiz\n/player — Guess the player\n/club — Guess the club\n"
-            "/daily — Daily challenge\n/leaderboard — Rankings\n/profile — Your stats",
-            reply_markup=home_keyboard(),
+            "⚽ <b>BET88 — THE FOOTBALL CHALLENGE</b>",
+            parse_mode=ParseMode.HTML, reply_markup=home_keyboard(),
         )
+    elif data == "help":
+        await help_command(update, context)
     elif data == "quiz":
-        await send_quiz(query.message, user.id, context)
+        await send_quiz(query.message, context)
     elif data == "daily":
         today = date.today().isoformat()
-        done = await db_execute("SELECT 1 FROM daily_completions WHERE user_id=%s AND challenge_date=%s", (user.id, today), fetch=True)
-        if done:
-            await query.message.reply_text("You have already completed today's challenge. Come back tomorrow!")
+        if f"{user.id}:{today}" in state["daily_completions"]:
+            await query.message.reply_text(
+                "You have already completed today's challenge. Come back tomorrow!"
+            )
         else:
-            await send_quiz(query.message, user.id, context, daily=True)
+            await send_quiz(query.message, context, daily=True)
     elif data in ("player", "club"):
-        await guess_game(query.message, user.id, context, data)
+        await guess_game(query.message, context, data)
     elif data == "profile":
         await show_profile(query.message, user.id)
     elif data == "leaderboard":
         await leaderboard_message(query.message)
     elif data == "facts":
-        await query.message.reply_text("💡 <b>FOOTBALL FACT</b>\\n\\n" + random.choice(FOOTBALL_FACTS), parse_mode=ParseMode.HTML)
+        await query.message.reply_text(
+            "💡 <b>FOOTBALL FACT</b>\n\n" + random.choice(FOOTBALL_FACTS),
+            parse_mode=ParseMode.HTML,
+        )
     elif data.startswith("answer:"):
         _, key, selected_text = data.split(":", 2)
         selected = int(selected_text)
         game = context.user_data.get(key)
         if not game:
-            await query.message.reply_text("That question has expired. Start a new game with /play.")
+            await query.message.reply_text(
+                "That question has expired. Start a new game with /play."
+            )
             return
         context.user_data.pop(key, None)
         if selected == game["answer"]:
             points = 25 if game["daily"] else 10
-            await add_points(user.id, points)
+            add_points(user.id, points)
             if game["daily"]:
-                await db_execute(
-                    "INSERT INTO daily_completions (user_id, challenge_date) VALUES (%s, %s) ON CONFLICT DO NOTHING",
-                    (user.id, game["challenge_date"]),
-                )
-            await query.message.reply_text(f"✅ Correct! +{points} points. Keep it up! ⚽")
+                completion = f"{user.id}:{game['challenge_date']}"
+                if completion not in state["daily_completions"]:
+                    state["daily_completions"].append(completion)
+            await query.message.reply_text(
+                f"✅ Correct! +{points} points. Keep it up! ⚽"
+            )
         else:
-            await query.message.reply_text("❌ Not quite! Better luck on the next question.")
-        await db_execute("UPDATE users SET games_played=games_played+1 WHERE user_id=%s", (user.id,))
-        await query.message.reply_text("What would you like to do next?", reply_markup=home_keyboard())
+            await query.message.reply_text(
+                "❌ Not quite! Better luck on the next question."
+            )
+        row = state["users"][str(user.id)]
+        row["games_played"] += 1
+        save_state()
+        await query.message.reply_text(
+            "What would you like to do next?", reply_markup=home_keyboard()
+        )
+
 
 async def add_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("This command is for bot administrators only.")
+    if not ADMIN_IDS:
+        await update.effective_message.reply_text(
+            "Admin question management is disabled. The bot can run without an admin ID."
+        )
         return
-    # Usage: /addquestion Question | option A | option B | option C | option D | correct option (1-4) | category
+    if update.effective_user.id not in ADMIN_IDS:
+        await update.effective_message.reply_text(
+            "This command is for bot administrators only."
+        )
+        return
     raw = " ".join(context.args)
     parts = [part.strip() for part in raw.split("|")]
     if len(parts) != 7:
-        await update.message.reply_text(
+        await update.effective_message.reply_text(
             "Usage:\n/addquestion Question? | Option A | Option B | Option C | Option D | correct option (1-4) | Category"
         )
         return
@@ -321,69 +396,33 @@ async def add_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if answer not in range(4):
             raise ValueError
     except ValueError:
-        await update.message.reply_text("Correct option must be a number from 1 to 4.")
+        await update.effective_message.reply_text(
+            "Correct option must be a number from 1 to 4."
+        )
         return
     category = rest[5]
-    await db_execute("INSERT INTO custom_questions (prompt, options, answer, category) VALUES (%s, %s, %s, %s)", (question, options, answer, category))
+    item = {
+        "prompt": question, "options": options,
+        "answer": answer, "category": category,
+    }
+    state["custom_questions"].append(item)
     QUESTIONS.append((question, options, answer, category))
-    await update.message.reply_text("✅ Question saved. It will remain available after bot restarts.")
-
-async def post_init(application: Application):
-    global pool
-    if not DATABASE_URL:
-        raise RuntimeError("DATABASE_URL is missing. Add a Render PostgreSQL connection string.")
-    pool = AsyncConnectionPool(DATABASE_URL, min_size=1, max_size=5, open=False)
-    await pool.open()
-    await db_execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            user_id BIGINT PRIMARY KEY,
-            username TEXT,
-            full_name TEXT NOT NULL,
-            points INTEGER NOT NULL DEFAULT 0,
-            correct_answers INTEGER NOT NULL DEFAULT 0,
-            games_played INTEGER NOT NULL DEFAULT 0,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-    """)
-    await db_execute("""
-        CREATE TABLE IF NOT EXISTS daily_completions (
-            user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-            challenge_date DATE NOT NULL,
-            PRIMARY KEY (user_id, challenge_date)
-        )
-    """)
-    await db_execute("""
-        CREATE TABLE IF NOT EXISTS custom_questions (
-            id BIGSERIAL PRIMARY KEY,
-            prompt TEXT NOT NULL,
-            options TEXT[] NOT NULL,
-            answer INTEGER NOT NULL CHECK (answer BETWEEN 0 AND 3),
-            category TEXT NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-    """)
-    saved_questions = await db_execute(
-        "SELECT prompt, options, answer, category FROM custom_questions ORDER BY id", fetch=True
+    save_state()
+    await update.effective_message.reply_text(
+        "✅ Question added to the bot's local question bank."
     )
-    QUESTIONS.extend((row["prompt"], row["options"], row["answer"], row["category"]) for row in saved_questions)
-    log.info("BET88 bot is ready. Database connection established.")
 
-async def post_shutdown(application: Application):
-    if pool:
-        await pool.close()
 
 def main():
     if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN is missing. Add your Telegram bot token to Render environment variables.")
-    application = (
-        Application.builder()
-        .token(BOT_TOKEN)
-        .post_init(post_init)
-        .post_shutdown(post_shutdown)
-        .build()
-    )
+        raise RuntimeError(
+            "BOT_TOKEN is missing. Add your Telegram bot token to Render environment variables."
+        )
+
+    load_state()
+    application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler(["help"], help_command))
+    application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler(["play", "quiz"], play))
     application.add_handler(CommandHandler("player", player))
     application.add_handler(CommandHandler("club", club))
@@ -394,8 +433,10 @@ def main():
     application.add_handler(CommandHandler("addquestion", add_question))
     application.add_handler(CallbackQueryHandler(callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_answer))
-    log.info("Starting BET88 using Telegram polling...")
+
+    log.info("Starting BET88 using Telegram polling (local JSON storage)...")
     application.run_polling(drop_pending_updates=True)
+
 
 if __name__ == "__main__":
     main()
