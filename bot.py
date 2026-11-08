@@ -87,6 +87,7 @@ def home_keyboard():
         [InlineKeyboardButton("🏆 Leaderboard", callback_data="leaderboard"),
          InlineKeyboardButton("👤 My Profile", callback_data="profile")],
         [InlineKeyboardButton("💡 Football Facts", callback_data="facts")],
+        [InlineKeyboardButton("💡 Football Facts", callback_data="facts")],
         [InlineKeyboardButton("ℹ️ Help", callback_data="help")],
     ])
 
@@ -131,7 +132,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/start — Open the main menu\n/play — Start a football quiz\n"
         "/player — Guess the mystery player\n/club — Guess the mystery club\n"
         "/daily — Take today's challenge\n/leaderboard — View top players\n"
-        "/profile — View your stats\n/help — Show this guide\n\n"
+        "/profile — View your stats\n/facts — Get a football fact\n/help — Show this guide\n\n"
         "BET88 is a football entertainment game. Points are for fun only.",
         parse_mode=ParseMode.HTML, reply_markup=home_keyboard(),
     )
