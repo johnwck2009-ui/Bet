@@ -163,18 +163,17 @@ async def leaderboard_message(message):
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await leaderboard_message(update.effective_message)
 
-async def send_quiz(message, user_id, daily=False):
+async def send_quiz(message, user_id, context, daily=False):
     if daily:
         index = date.today().toordinal() % len(QUESTIONS)
         question = QUESTIONS[index]
-        context_key = f"daily:{date.today().isoformat()}"
+        context_key = "daily"
     else:
         question = random.choice(QUESTIONS)
         context_key = "quiz"
     prompt, options, answer, category = question
     # The question index and answer are stored in the user's Telegram session.
-    context = message.get_bot()._application.user_data[user_id]
-    context[context_key] = {"answer": answer, "question": prompt, "daily": daily}
+    context.user_data[context_key] = {"answer": answer, "question": prompt, "daily": daily, "challenge_date": date.today().isoformat() if daily else None}
     buttons = [
         [InlineKeyboardButton(f"{chr(65+i)}. {option}", callback_data=f"answer:{context_key}:{i}")]
         for i, option in enumerate(options)
@@ -188,7 +187,7 @@ async def send_quiz(message, user_id, daily=False):
 
 async def play(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await ensure_user(update.effective_user)
-    await send_quiz(update.effective_message, update.effective_user.id)
+    await send_quiz(update.effective_message, update.effective_user.id, context)
 
 async def daily(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await ensure_user(update.effective_user)
@@ -200,13 +199,12 @@ async def daily(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if done:
         await update.effective_message.reply_text("You have already completed today's challenge. Come back tomorrow! ⚽")
         return
-    await send_quiz(update.effective_message, update.effective_user.id, daily=True)
+    await send_quiz(update.effective_message, update.effective_user.id, context, daily=True)
 
-async def guess_game(message, user_id, kind):
+async def guess_game(message, user_id, context, kind):
     options = PLAYERS if kind == "player" else CLUBS
     clue, answer = random.choice(options)
-    context = message.get_bot()._application.user_data[user_id]
-    context[f"guess:{kind}"] = {"answer": answer.casefold(), "display": answer}
+    context.user_data[f"guess:{kind}"] = {"answer": answer.casefold(), "display": answer}
     await message.reply_text(
         ("🕵️ <b>GUESS THE PLAYER</b>\n" if kind == "player" else "🏟 <b>GUESS THE CLUB</b>\n")
         + escape(clue) + "\n\nSend your answer as a message. You have one attempt.",
@@ -215,11 +213,11 @@ async def guess_game(message, user_id, kind):
 
 async def player(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await ensure_user(update.effective_user)
-    await guess_game(update.effective_message, update.effective_user.id, "player")
+    await guess_game(update.effective_message, update.effective_user.id, context, "player")
 
 async def club(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await ensure_user(update.effective_user)
-    await guess_game(update.effective_message, update.effective_user.id, "club")
+    await guess_game(update.effective_message, update.effective_user.id, context, "club")
 
 async def text_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -250,22 +248,22 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=home_keyboard(),
         )
     elif data == "quiz":
-        await send_quiz(query.message, user.id)
+        await send_quiz(query.message, user.id, context)
     elif data == "daily":
         today = date.today().isoformat()
         done = await db_execute("SELECT 1 FROM daily_completions WHERE user_id=%s AND challenge_date=%s", (user.id, today), fetch=True)
         if done:
             await query.message.reply_text("You have already completed today's challenge. Come back tomorrow!")
         else:
-            await send_quiz(query.message, user.id, daily=True)
+            await send_quiz(query.message, user.id, context, daily=True)
     elif data in ("player", "club"):
-        await guess_game(query.message, user.id, data)
+        await guess_game(query.message, user.id, context, data)
     elif data == "profile":
         await show_profile(query.message, user.id)
     elif data == "leaderboard":
         await leaderboard_message(query.message)
     elif data.startswith("answer:"):
-        _, key, selected_text = data.split(":")
+        _, key, selected_text = data.split(":", 2)
         selected = int(selected_text)
         game = context.user_data.get(key)
         if not game:
@@ -278,7 +276,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if game["daily"]:
                 await db_execute(
                     "INSERT INTO daily_completions (user_id, challenge_date) VALUES (%s, %s) ON CONFLICT DO NOTHING",
-                    (user.id, date.today().isoformat()),
+                    (user.id, game["challenge_date"]),
                 )
             await query.message.reply_text(f"✅ Correct! +{points} points. Keep it up! ⚽")
         else:
