@@ -38,6 +38,7 @@ The repository includes `render.yaml` as a deployment blueprint. If you use it, 
 - `/daily` — daily challenge
 - `/leaderboard` — global rankings
 - `/profile` — your stats
+- `/facts` — a football fact
 - `/help` — command guide
 - `/addquestion` — admin-only question entry
 
