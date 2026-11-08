@@ -59,6 +59,17 @@ PLAYERS = [
     ("I am an Egyptian forward known for my time at Liverpool.", "Mohamed Salah"),
     ("I am a Norwegian striker who became known for prolific scoring at Manchester City.", "Erling Haaland"),
 ]
+FOOTBALL_FACTS = [
+    "The first FIFA World Cup was held in Uruguay in 1930.",
+    "A standard football pitch is rectangular, but its exact dimensions can vary within the Laws of the Game.",
+    "The UEFA Champions League was previously known as the European Champion Clubs’ Cup.",
+    "The penalty spot is 11 metres (12 yards) from the goal line.",
+    "The FIFA World Cup trophy introduced in 1974 replaced the Jules Rimet Trophy.",
+    "A standard match has two halves of 45 minutes each, before added time.",
+    "The offside law does not apply directly from a goal kick, throw-in or corner kick.",
+    "The first Women’s World Cup organised by FIFA took place in 1991 in China.",
+]
+
 CLUBS = [
     ("My home is Anfield. My supporters sing 'You'll Never Walk Alone'.", "Liverpool"),
     ("I play at the Santiago Bernabéu and have a record number of European Cups.", "Real Madrid"),
@@ -75,6 +86,7 @@ def home_keyboard():
          InlineKeyboardButton("📅 Daily Challenge", callback_data="daily")],
         [InlineKeyboardButton("🏆 Leaderboard", callback_data="leaderboard"),
          InlineKeyboardButton("👤 My Profile", callback_data="profile")],
+        [InlineKeyboardButton("💡 Football Facts", callback_data="facts")],
         [InlineKeyboardButton("ℹ️ Help", callback_data="help")],
     ])
 
@@ -162,6 +174,9 @@ async def leaderboard_message(message):
 
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await leaderboard_message(update.effective_message)
+
+async def facts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.effective_message.reply_text("💡 <b>FOOTBALL FACT</b>\\n\\n" + random.choice(FOOTBALL_FACTS), parse_mode=ParseMode.HTML)
 
 async def send_quiz(message, user_id, context, daily=False):
     if daily:
@@ -262,6 +277,8 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_profile(query.message, user.id)
     elif data == "leaderboard":
         await leaderboard_message(query.message)
+    elif data == "facts":
+        await query.message.reply_text("💡 <b>FOOTBALL FACT</b>\\n\\n" + random.choice(FOOTBALL_FACTS), parse_mode=ParseMode.HTML)
     elif data.startswith("answer:"):
         _, key, selected_text = data.split(":", 2)
         selected = int(selected_text)
@@ -372,6 +389,7 @@ def main():
     application.add_handler(CommandHandler("daily", daily))
     application.add_handler(CommandHandler("leaderboard", leaderboard))
     application.add_handler(CommandHandler("profile", profile))
+    application.add_handler(CommandHandler("facts", facts))
     application.add_handler(CommandHandler("addquestion", add_question))
     application.add_handler(CallbackQueryHandler(callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_answer))
