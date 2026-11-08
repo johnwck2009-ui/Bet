@@ -306,8 +306,9 @@ async def add_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Correct option must be a number from 1 to 4.")
         return
     category = rest[5]
+    await db_execute("INSERT INTO custom_questions (prompt, options, answer, category) VALUES (%s, %s, %s, %s)", (question, options, answer, category))
     QUESTIONS.append((question, options, answer, category))
-    await update.message.reply_text("✅ Question added to this running bot instance. Add it to bot.py as well so it remains after a restart.")
+    await update.message.reply_text("✅ Question saved. It will remain available after bot restarts.")
 
 async def post_init(application: Application):
     global pool
@@ -333,6 +334,20 @@ async def post_init(application: Application):
             PRIMARY KEY (user_id, challenge_date)
         )
     """)
+    await db_execute("""
+        CREATE TABLE IF NOT EXISTS custom_questions (
+            id BIGSERIAL PRIMARY KEY,
+            prompt TEXT NOT NULL,
+            options TEXT[] NOT NULL,
+            answer INTEGER NOT NULL CHECK (answer BETWEEN 0 AND 3),
+            category TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+    saved_questions = await db_execute(
+        "SELECT prompt, options, answer, category FROM custom_questions ORDER BY id", fetch=True
+    )
+    QUESTIONS.extend((row["prompt"], row["options"], row["answer"], row["category"]) for row in saved_questions)
     log.info("BET88 bot is ready. Database connection established.")
 
 async def post_shutdown(application: Application):
