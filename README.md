@@ -1,33 +1,29 @@
 # BET88 — The Football Challenge
 
-A traditional Telegram bot built with Python 3.14, python-telegram-bot, and PostgreSQL. It runs with Telegram long polling as a Render Background Worker. It is not a Mini App.
+A traditional Telegram football entertainment bot built with Python 3.14 and python-telegram-bot. It runs using Telegram long polling as a Render Background Worker. It is not a Mini App and does not require a database.
 
 ## Features
 
 - Football multiple-choice quiz
 - Guess the Player
 - Guess the Club
-- Daily football challenge (one completion per user per day)
+- Daily football challenge
 - Global points leaderboard
 - Player profiles and statistics
-- Admin-only question command
+- Optional admin question entry
 
 All points are non-monetary entertainment points. There are no bets, odds, deposits, withdrawals, casino games, or gambling features.
 
 ## Deploy on Render
 
-1. Create a PostgreSQL database on Render.
-2. Create a **Background Worker** and connect this repository.
-3. Set the build command to `pip install -r requirements.txt`.
-4. Set the start command to `python bot.py`.
-5. Set the following environment variables:
+1. Create a **Background Worker** connected to this repository.
+2. Set the build command to `pip install -r requirements.txt`.
+3. Set the start command to `python bot.py`.
+4. Add one environment variable:
    - `BOT_TOKEN`: token from BotFather
-   - `DATABASE_URL`: Render PostgreSQL **Internal Database URL** (use the external URL only if connecting from outside Render)
-   - `ADMIN_IDS`: comma-separated Telegram numeric user IDs allowed to use `/addquestion`
-   - `PYTHON_VERSION`: `3.14` (also pinned in `.python-version`)
-6. Deploy. The worker starts polling Telegram automatically.
+5. Deploy. The worker starts polling Telegram automatically.
 
-The repository includes `render.yaml` as a deployment blueprint. If you use it, provide the secret environment variables in the Render dashboard when prompted. A Background Worker is appropriate because this bot uses polling and does not need a public web server.
+Python 3.14 is selected by `.python-version`. No PostgreSQL database or `DATABASE_URL` is required.
 
 ## Commands
 
@@ -40,7 +36,7 @@ The repository includes `render.yaml` as a deployment blueprint. If you use it, 
 - `/profile` — your stats
 - `/facts` — a football fact
 - `/help` — command guide
-- `/addquestion` — admin-only question entry
+- `/addquestion` — optional admin-only question entry
 
 Admin question format:
 
@@ -48,8 +44,8 @@ Admin question format:
 /addquestion Question? | Option A | Option B | Option C | Option D | correct option (1-4) | Category
 ```
 
-## Notes
+To enable `/addquestion`, optionally set `ADMIN_IDS` to a comma-separated list of numeric Telegram user IDs. It is not needed to run the bot.
 
-- Never commit your Telegram bot token or database credentials.
-- The database tables are created automatically on first startup.
-- The starter question and guessing datasets live in `bot.py`. Expand and review the question bank before public launch.
+## Storage note
+
+The bot saves scores, daily completions, and custom questions to a local JSON file. No database setup is needed. Render's default filesystem is ephemeral, so local saved data may be lost when the service is redeployed or its instance is replaced. The bot itself continues to work without any database.
