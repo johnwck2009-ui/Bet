@@ -137,6 +137,7 @@ def add_points(user_id, points):
 
 def home_keyboard():
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📲 ចូលប្រើសេវាកម្ម", url="https://t.me/WIN365KH1BOT?start=telegram")],
         [InlineKeyboardButton("⚽ Play Quiz", callback_data="quiz"),
          InlineKeyboardButton("🕵️ Guess Player", callback_data="player")],
         [InlineKeyboardButton("🏟 Guess Club", callback_data="club"),
@@ -151,12 +152,8 @@ def home_keyboard():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ensure_user(update.effective_user)
     await update.effective_message.reply_text(
-        "⚽ <b>WELCOME TO BET88</b>\n"
-        "<i>THE FOOTBALL CHALLENGE</i>\n\n"
-        "Your football knowledge is about to be tested. Play trivia, identify legendary players, "
-        "guess clubs and take on the daily challenge. Earn points and climb the global leaderboard.\n\n"
-        "Ready to prove how well you know the beautiful game?",
-        parse_mode=ParseMode.HTML, reply_markup=home_keyboard(),
+        "សូមស្វាគមន៍មកវេបសាយធំបំផុត ងាយស្រួលលេង📲 និងគួរឱ្យទុកចិត្តបំផុតនៅកម្ពុជា🔥សេវាកម្ម២៤ម៉ោង",
+        reply_markup=home_keyboard(),
     )
 
 
