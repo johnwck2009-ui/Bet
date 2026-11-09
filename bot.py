@@ -138,16 +138,7 @@ def add_points(user_id, points):
 def home_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📲 ចូលប្រើសេវាកម្ម", url="https://t.me/WIN365KH1BOT?start=telegram")],
-        [InlineKeyboardButton("⚽ Play Quiz", callback_data="quiz"),
-         InlineKeyboardButton("🕵️ Guess Player", callback_data="player")],
-        [InlineKeyboardButton("🏟 Guess Club", callback_data="club"),
-         InlineKeyboardButton("📅 Daily Challenge", callback_data="daily")],
-        [InlineKeyboardButton("🏆 Leaderboard", callback_data="leaderboard"),
-         InlineKeyboardButton("👤 My Profile", callback_data="profile")],
-        [InlineKeyboardButton("💡 Football Facts", callback_data="facts")],
-        [InlineKeyboardButton("ℹ️ Help", callback_data="help")],
     ])
-
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ensure_user(update.effective_user)
