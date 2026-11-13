@@ -137,7 +137,7 @@ def add_points(user_id, points):
 
 def home_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📲 ចូលប្រើសេវាកម្ម", url="https://t.me/BET88KH1BOT?start=telegram")],
+        [InlineKeyboardButton("📲 ចូលប្រើសេវាកម្ម", url="https://t.me/PT88b88_Bet")],
     ])
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
